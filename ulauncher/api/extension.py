@@ -2,7 +2,8 @@ import sys
 import os
 import json
 import logging
-import threading
+from threading import Thread, Lock, Event
+from subprocess import Popen, PIPE
 from typing import Iterator, Type, Union
 from collections import defaultdict
 
@@ -28,6 +29,9 @@ class Extension:
         self._listeners = defaultdict(list)
         self._client = Client(self)
         self.preferences = {}
+        self.process: Popen | None = None
+        self.process_lock = Lock()
+        self.thread: StoppableThread | None = None
         try:
             self.preferences = json.loads(os.environ.get("EXTENSION_PREFERENCES", "{}"))
         except Exception:
@@ -75,16 +79,39 @@ class Extension:
             # We can use method_name to determine if listener was added the old way or the new class method way
             # Pass the event args if method_name isn't None, otherwise event and self for backwards compatibility
             args = tuple(event.args) if method_name else (event, self)
-            threading.Thread(target=self.run_event_listener, args=(event, method, args)).start()
+            if self.thread:
+                self.thread.stop()
+            self.thread = StoppableThread(target=self.run_event_listener, args=(event, listener, method, args))
+            self.thread.start()
 
-    def run_event_listener(self, event, method, args):
+    def run_event_listener(self, event, listener, method, args):
         action = method(*args)
-        if action:
+        while action:
             if isinstance(action, Iterator):
                 action = list(action)
-            assert isinstance(action, (list, BaseAction)), "on_event must return list of Results or a BaseAction"
-            origin_event = getattr(event, "origin_event", event)
-            self._client.send(Response(origin_event, action))
+            if isinstance(action, list) and len(action) != 0 and isinstance(action[0], str):
+                self.process_lock.acquire()
+                if self.process and self.process.poll() is None:
+                    self.process.kill()
+                    self.logger.warning('killed last process')
+                self.logger.debug('start run command: %s', ' '.join(action))
+                process = Popen(action, stdout=PIPE, stderr=PIPE)
+                self.process = process
+                self.process_lock.release()
+                action = None
+                if process.wait() == 0:
+                    out, _ = process.communicate()
+                    output = out.decode('utf-8')
+                    self.logger.debug('command output: %s', output)
+                    method = getattr(listener, 'on_output')
+                    action = method(process.args, output)
+                else:
+                    self.logger.warning('process return non-zero')
+            else:
+                assert isinstance(action, (list, BaseAction)), "on_event must return list of Results or a BaseAction"
+                origin_event = getattr(event, "origin_event", event)
+                self._client.send(Response(origin_event, action))
+                action = None
 
     def run(self):
         """
@@ -108,8 +135,26 @@ class Extension:
     def on_unload(self):
         pass
 
+    def on_output(self, cmd, output):
+        pass
+
 
 class PreferencesUpdateEventListener(EventListener):
 
     def on_event(self, event, extension):
         extension.preferences[event.id] = event.new_value
+
+class StoppableThread(Thread):
+
+    """Thread class with a stop() method. The thread itself has to check
+    regularly for the stopped() condition."""
+
+    def __init__(self, target, args):
+        super(StoppableThread, self).__init__(target=target, args=args)
+        self._stop_event = Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
