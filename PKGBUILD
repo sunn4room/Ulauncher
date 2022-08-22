@@ -3,7 +3,7 @@
 
 # To install, run `makepkg -is`
 
-pkgname=ulauncher-git
+pkgname=ulauncher-sunn4room
 pkgver=DEV
 pkgrel=1
 pkgdesc='Application launcher for Linux'
