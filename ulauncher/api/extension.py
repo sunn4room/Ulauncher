@@ -10,6 +10,7 @@ from ulauncher.api.result.extension_result import ExtensionResult
 
 from ulauncher.api.shared.Response import Response
 from ulauncher.api.shared.action.BaseAction import BaseAction
+from ulauncher.api.shared.action.HideWindowAction import HideWindowAction
 from ulauncher.api.shared.event import (BaseEvent, KeywordQueryEvent, InputTriggerEvent, ItemEnterEvent,
                                         LaunchTriggerEvent, PreferencesUpdateEvent, UnloadEvent)
 from ulauncher.api.shared.query import Query
@@ -94,7 +95,6 @@ class Extension:
                 if isinstance(action[0], str):
                     action = [action]
                 stdout = None
-                success = True
                 for cmd in action:
                     self.logger.debug('run command: %s', ' '.join(cmd))
                     process = Popen(cmd, stdin=stdout, stdout=PIPE, stderr=PIPE)
@@ -105,16 +105,19 @@ class Extension:
                     self.process = process
                     self.process_lock.release()
                     if process.wait() != 0:
-                        self.logger.debug('run command failed: %s', ' '.join(cmd))
-                        success = False
+                        cmd_str = ' '.join(cmd)
+                        self.logger.debug('run command failed: %s', cmd_str)
+                        action = [ExtensionResult(
+                            name='Child process failed',
+                            description=cmd_str,
+                            on_enter=HideWindowAction()
+                        )]
+                        stdout = None
                         break
-                if success:
+                if stdout:
                     output = stdout.read().decode('utf-8')
                     method = getattr(listener, 'on_output')
                     action = method(process.args, output)
-                else:
-                    self.logger.warning('process return non-zero')
-                    action = None
             else:
                 assert isinstance(action, (list, BaseAction)), "on_event must return list of Results or a BaseAction"
                 origin_event = getattr(event, "origin_event", event)
