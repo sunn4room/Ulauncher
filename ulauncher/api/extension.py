@@ -91,7 +91,6 @@ class Extension:
         while True:
             if action is None:
                 action = []
-            self.logger.warning(action)
             if isinstance(action, Iterator):
                 action = list(action)
             if isinstance(action, list) and len(action) != 0 and not isinstance(action[0], ExtensionResult):
