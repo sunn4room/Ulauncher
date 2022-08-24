@@ -88,7 +88,10 @@ class Extension:
 
     def run_event_listener(self, event, listener, method, args):
         action = method(*args)
-        while action:
+        while True:
+            if action is None:
+                action = []
+            self.logger.warning(action)
             if isinstance(action, Iterator):
                 action = list(action)
             if isinstance(action, list) and len(action) != 0 and not isinstance(action[0], ExtensionResult):
@@ -96,7 +99,8 @@ class Extension:
                     action = [action]
                 stdout = None
                 for cmd in action:
-                    self.logger.debug('run command: %s', ' '.join(cmd))
+                    cmd_str = ' '.join(cmd)
+                    self.logger.info('run command: %s', cmd_str)
                     process = Popen(cmd, stdin=stdout, stdout=PIPE, stderr=PIPE)
                     stdout = process.stdout
                     self.process_lock.acquire()
@@ -105,8 +109,7 @@ class Extension:
                     self.process = process
                     self.process_lock.release()
                     if process.wait() != 0:
-                        cmd_str = ' '.join(cmd)
-                        self.logger.debug('run command failed: %s', cmd_str)
+                        self.logger.warning('run command failed: %s', cmd_str)
                         action = [ExtensionResult(
                             name='Child process failed',
                             description=cmd_str,
@@ -122,7 +125,7 @@ class Extension:
                 assert isinstance(action, (list, BaseAction)), "on_event must return list of Results or a BaseAction"
                 origin_event = getattr(event, "origin_event", event)
                 self._client.send(Response(origin_event, action))
-                action = None
+                break
 
     def run(self):
         """
